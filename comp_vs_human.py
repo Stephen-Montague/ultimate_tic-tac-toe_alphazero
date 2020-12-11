@@ -8,7 +8,7 @@ from keras.models import load_model
 model_path = "GoodUltimate2019-03-03 21_06_38+MCTS600+cpuct4.h5"
 mcts_search = 1600
 MCTS = True
-cpuct = 1.5
+cpuct = 1.4142135623730950  # sqrt(2): standard UCT constant to adjust exploitation-exploration.
 
 
 def set_empty_board():
@@ -26,6 +26,7 @@ def print_board(totalBoard):
     thirdRow = ""
 
     # Take each board, save each row in a variable, then print
+    print("\n---------------------")
     for boardIndex in range(len(totalBoard)):
         firstRow = firstRow + "|" + " ".join(totalBoard[boardIndex][0]) + "|"
         secondRow = secondRow + "|" + " ".join(totalBoard[boardIndex][1]) + "|"
@@ -117,7 +118,7 @@ def move(board, action, player):
     # set new subBoard
     newSubBoard = (bestPosition[1] * 3) + bestPosition[2]
 
-    # if the subBoard was won, checking whether the entire board is won as well
+    # if the subBoard was won, check whether the entire board is won as well
     if wonBoard is True:
         win = checkWinner(board, subBoard, turn)
 
@@ -157,6 +158,22 @@ def checkWinner(board, winningSubBoard, turn):
         return True
     else:
         return False
+
+
+def tieBoard(board):
+    movesPossible = False
+    for mini in range(9):
+        if board[mini][1][1] == "x" or board[mini][1][1] == "o":
+            continue
+        for row in range(3):
+            for column in range(3):
+                if board[mini][row][column] == " ":
+                    movesPossible = True   # .append((mini * 9) + (row * 3) + column)
+                    break
+    if movesPossible:
+        return False  # It's not a tie, since there are moves possible.
+    else:
+        return True  # It's a tie.
 
 
 def human_turn(board, subBoard, turn):
@@ -200,7 +217,43 @@ def human_turn(board, subBoard, turn):
             print("That space has already been taken, please try again")
             continue
         else:
-            return subBoard * 9 + y * 3 + x
+            return subBoard * 9 + y * 3 + x  # Absolute coordinate of input move, from 0-80.
+
+# ========= BOT CODE - FOR TESTING ============
+
+def bot_turn(board, subBoard, turn):
+    possible = possiblePos(board, subBoard)
+    print("\nBot possible", possible)
+
+    print_board(board)
+    print("It is " + turn + "'s turn")
+
+    # check if the subBoard has already been won, and takes new subBoard as input
+    if subBoard == 9 or board[subBoard][1][1] == "x" or board[subBoard][1][1] == "o" or len(possible) > 9 or \
+            not any(' ' in space for space in board[subBoard]):
+        while True:
+            newSubBoard = np.random.choice(range(9))
+            if board[newSubBoard][1][1] == "x" or board[newSubBoard][1][1] == "o" or \
+                    not any(' ' in space for space in board[newSubBoard]):
+                continue
+            else:
+                subBoard = newSubBoard
+                print("Bot chooses board")
+                break
+
+    # takes placement of piece as input
+    print("Bot to play on board", subBoard + 1)
+    input_to_coordinates = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2), (2, 0), (2, 1), (2, 2)]
+    while True:
+        bot_input = np.random.choice(range(9))
+        y, x = input_to_coordinates[bot_input]
+        if board[subBoard][y][x] != " ":
+            continue
+        else:
+            print("Bot plays on space:", bot_input + 1)
+            return subBoard * 9 + y * 3 + x  # Absolute coordinate of input move, from 0-80.
+
+# =========================================
 
 
 # ---------------------------------
@@ -264,7 +317,7 @@ def set_board_to_array(board_original, mini_board, player):
                 if board[mini_board][line][item] == " ":
                     board[mini_board][line][item] = 'v'
                     tie = False
-    # if not, then replacing empty cells in mini board with 'v'
+    # if not, then replace empty cells in mini board with 'v'
     else:
         for subBoard in range(9):
             for line in range(3):
@@ -322,8 +375,8 @@ def mcts(s, current_player, mini_board):
             policy, v = nn.predict(sArray.reshape((1, 9, 9)))
             v = v[0][0]
             validS = np.zeros(81)
-            np.put(validS, possibleA, 1)
-            policy = policy.reshape(81) * validS
+            np.put(validS, possibleA, 1)  # validS is 1 for possibleA, else 0
+            policy = policy.reshape(81) * validS  # policy * validS -> keep policy values only for valid states
             policy = policy / np.sum(policy)
             P[sTuple] = policy
 
@@ -339,7 +392,7 @@ def mcts(s, current_player, mini_board):
         best_a = None
         for a in possibleA:
 
-            uct_a = Q[(sTuple, a)] + cpuct * P[sTuple][a] * (math.sqrt(Ns[sTuple]) / (1 + Nsa[(sTuple, a)]))
+            uct_a = Q[(sTuple, a)] + cpuct * P[sTuple][a] * (math.sqrt(Ns[sTuple] / (1 + Nsa[(sTuple, a)])))
 
             if uct_a > best_uct:
                 best_uct = uct_a
@@ -367,7 +420,7 @@ def set_action_probability_distribution(init_board, current_player, mini_board):
         s = copy.deepcopy(init_board)
         mcts(s, current_player, mini_board)
 
-    print("Done MCTS")
+    print("MCTS done")
 
     actions_dict = {}
 
@@ -377,7 +430,8 @@ def set_action_probability_distribution(init_board, current_player, mini_board):
     for a in possiblePos(init_board, mini_board):
         actions_dict[a] = Nsa[(sTuple, a)] / Ns[sTuple]
 
-    print("Actions dict:", actions_dict)
+    # Turn on to see distribution over all actions. Turn off for less verbose testing.
+    # print("Actions dict:", actions_dict)
 
     action_probability_distribution = np.zeros(81)
     for a in actions_dict:
@@ -390,47 +444,92 @@ nn = load_model(model_path)
 
 
 def playGame():
+    global nn
+    global Q  # state-action values
+    global Nsa  # number of times certain state-action pair has been visited
+    global Ns  # number of times state has been visited
+    global W  # number of total points collected after taking state action pair
+    global P  # initial predicted probabilities of taking certain actions in state
     board = set_empty_board()
     mini_board = 9
-    global nn
 
-    while True:
-        action = human_turn(board, mini_board, 'X')
-        next_board, mini_board, wonBoard = move(board, action, 1)
+    # Set scores for a tournament
+    random_bot = 0
+    alpha_bot = 0
+    tie = 0
 
-        if wonBoard:
+    # Todo: Select opponent to face AlphaT, which uses NN predictions + MCTS.
+    #   Set action = bot_turn(...) for a random-play bot or human_turn(...) for manual input.
+    while (random_bot + alpha_bot + tie) < 1000:
+        while True:
+            action = bot_turn(board, mini_board, 'X')  # human_turn(board, mini_board, 'X')
+            next_board, mini_board, wonBoard = move(board, action, 1)
 
-            print("You won the game!")
-            print_board(board)
-            print("Wow you're really good. "
-                  "You just beat a computer that trained for hours and thought about thousands of moves.")
-            break
-        else:
-            board = next_board
+            if wonBoard:  # Human wins
+                random_bot += 1
+                print("You won the game!")
+                print_board(board)
+                print("Wow you're really good. "
+                      "You just beat a computer that trained for hours and thought about thousands of moves.")
+                break
+            elif tieBoard(board):
+                tie += 1
+                print_board(board)
+                print("The game is a tie.")
+                break
+            else:
+                board = next_board
 
-        if MCTS:
-            policy = set_action_probability_distribution(board, -1, mini_board)
-            policy = policy / np.sum(policy)
-        else:
-            policy, value = nn.predict(set_board_to_array(board, mini_board, -1).reshape((1, 9, 9)))
-            possibleA = possiblePos(board, mini_board)
-            validS = np.zeros(81)
-            np.put(validS, possibleA, 1)
-            policy = policy.reshape(81) * validS
-            policy = policy / np.sum(policy)
+            if MCTS:
+                print("Thinking...")
+                policy = set_action_probability_distribution(board, -1, mini_board)
+                policy = policy / np.sum(policy)
+            else:
+                policy, value = nn.predict(set_board_to_array(board, mini_board, -1).reshape((1, 9, 9)))
+                possibleA = possiblePos(board, mini_board)
+                validS = np.zeros(81)
+                np.put(validS, possibleA, 1)
+                policy = policy.reshape(81) * validS
+                policy = policy / np.sum(policy)
 
-        action = np.argmax(policy)
-        print("Action", action)
-        print("Policy")
-        print(policy)
+            action = np.argmax(policy)
+            print("AlphaT action:", action)  # Action taken of all possible, from 0-80, only counting empty positions.
+            # print("Policy")  # Turn on for verbose output.
+            # print(policy)
 
-        next_board, mini_board, wonBoard = move(board, action, -1)
+            next_board, mini_board, wonBoard = move(board, action, -1)
 
-        if wonBoard:
-            print("Awww you lost. Better luck next time")
-            break
-        else:
-            board = next_board
+            if wonBoard:   # Computer wins
+                alpha_bot += 1
+                print_board(board)
+                print("Awww you lost. Better luck next time")
+                break
+            elif tieBoard(board):
+                tie += 1
+                print_board(board)
+                print("The game is a tie.")
+                break
+            else:
+                board = next_board
+
+        print("\n***********************************************************************************************\n")
+        print("Tournament Results")
+        print("\n***********************************************************************************************\n")
+        print("Random :  ", random_bot)
+        print("Alpha  :  ", alpha_bot)
+        print("Tie    :  ", tie)
+        print("\n***********************************************************************************************\n")
+        print("")
+        print("\n***********************************************************************************************\n")
+
+        # RESET
+        Q = {}  # state-action values
+        Nsa = {}  # number of times certain state-action pair has been visited
+        Ns = {}  # number of times state has been visited
+        W = {}  # number of total points collected after taking state action pair
+        P = {}  # initial predicted probabilities of taking certain actions in state
+        board = set_empty_board()
+        mini_board = 9  # Magic number.  Boards 0-8 are real.  Nine means a blank board.
 
 
 playGame()
